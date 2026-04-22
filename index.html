@@ -169,6 +169,71 @@
   }
 
   .stage-hidden { opacity: 0; }
+
+  /* ═══════════════════════ Tablet / mobile ═══════════════════════ */
+  /* Stack controls below canvas, let the canvas area flex to screen width. */
+  @media (max-width: 900px) {
+    body {
+      align-items: flex-start;
+      padding: 24px 16px 40px;
+    }
+    #layout {
+      grid-template-columns: 1fr;
+      gap: 28px;
+      justify-items: center;
+      width: 100%;
+      max-width: 720px;
+    }
+    #left {
+      width: 100%;
+      max-width: 720px;
+      gap: 12px;
+    }
+    #canvas-area {
+      width: 100%;
+      max-width: 720px;
+      height: auto;
+      min-height: 0;
+    }
+    #frame { max-width: 100%; }
+    /* Force the canvas to scale with its container. Overrides the inline
+       width/height that the ratio-morph animation sets on desktop; on mobile
+       the placeholder covers the ratio swap, so the morph animation has no
+       visual role. */
+    #frame canvas {
+      width: 100% !important;
+      height: auto !important;
+      max-width: 100%;
+    }
+    #controls {
+      width: 100%;
+      max-width: 480px;
+      position: static;
+      top: auto;
+    }
+    .kbd-hint { display: none; }
+  }
+
+  /* ═══════════════════════ Phones ═══════════════════════ */
+  /* Tighter spacing + larger tap targets. */
+  @media (max-width: 480px) {
+    body { padding: 16px 12px 32px; }
+    #left { gap: 10px; }
+    #controls { gap: 18px; }
+    .ctrl-btn {
+      padding: 13px 0;
+      font-size: 14px;
+    }
+    input[type=range] { height: 4px; }
+    input[type=range]::-webkit-slider-thumb {
+      width: 22px; height: 22px;
+    }
+    input[type=range]::-moz-range-thumb {
+      width: 22px; height: 22px;
+    }
+    .ratio-btn { padding: 8px 12px; }
+    #title { font-size: 17px; }
+  }
 </style>
 </head>
 <body>
@@ -1189,35 +1254,41 @@ downloadBtn.addEventListener('click', async () => {
 // ───────────────────────────── Frame parallax tilt ─────────────────────────────
 // Gentle 3D tilt of the artwork frame that follows the cursor and springs back
 // on leave. Coalesced via rAF so rapid pointermoves only schedule one animation.
-let tiltCtrl = null;
-let tiltPending = null;
-let tiltRaf = null;
-function commitTilt() {
-  tiltRaf = null;
-  if (!tiltPending) return;
-  if (tiltCtrl) { try { tiltCtrl.stop(); } catch(_){} }
-  tiltCtrl = animate(frameEl, tiltPending, { duration: 0.42, ease: [0.22, 0.7, 0.3, 1] });
-  tiltPending = null;
-}
-canvasArea.addEventListener('pointermove', (e) => {
-  const r = canvasArea.getBoundingClientRect();
-  const nx = (e.clientX - r.left - r.width  / 2) / (r.width  / 2);
-  const ny = (e.clientY - r.top  - r.height / 2) / (r.height / 2);
-  const clamp = v => v < -1 ? -1 : v > 1 ? 1 : v;
-  tiltPending = {
-    rotateX: clamp(-ny) * 3.2,
-    rotateY: clamp( nx) * 3.2,
+// Only installed on devices that actually have hover (desktops/laptops with a
+// mouse or trackpad); on touch-only devices the tilt would misfire during
+// scroll, and there's no natural "leave" event to reset it.
+const hasHover = window.matchMedia && window.matchMedia('(hover: hover)').matches;
+if (hasHover) {
+  let tiltCtrl = null;
+  let tiltPending = null;
+  let tiltRaf = null;
+  const commitTilt = () => {
+    tiltRaf = null;
+    if (!tiltPending) return;
+    if (tiltCtrl) { try { tiltCtrl.stop(); } catch(_){} }
+    tiltCtrl = animate(frameEl, tiltPending, { duration: 0.42, ease: [0.22, 0.7, 0.3, 1] });
+    tiltPending = null;
   };
-  if (!tiltRaf) tiltRaf = requestAnimationFrame(commitTilt);
-});
-canvasArea.addEventListener('pointerleave', () => {
-  tiltPending = null;
-  if (tiltCtrl) { try { tiltCtrl.stop(); } catch(_){} }
-  tiltCtrl = animate(frameEl,
-    { rotateX: 0, rotateY: 0 },
-    { type: spring, stiffness: 140, damping: 22, mass: 1 }
-  );
-});
+  canvasArea.addEventListener('pointermove', (e) => {
+    const r = canvasArea.getBoundingClientRect();
+    const nx = (e.clientX - r.left - r.width  / 2) / (r.width  / 2);
+    const ny = (e.clientY - r.top  - r.height / 2) / (r.height / 2);
+    const clamp = v => v < -1 ? -1 : v > 1 ? 1 : v;
+    tiltPending = {
+      rotateX: clamp(-ny) * 3.2,
+      rotateY: clamp( nx) * 3.2,
+    };
+    if (!tiltRaf) tiltRaf = requestAnimationFrame(commitTilt);
+  });
+  canvasArea.addEventListener('pointerleave', () => {
+    tiltPending = null;
+    if (tiltCtrl) { try { tiltCtrl.stop(); } catch(_){} }
+    tiltCtrl = animate(frameEl,
+      { rotateX: 0, rotateY: 0 },
+      { type: spring, stiffness: 140, damping: 22, mass: 1 }
+    );
+  });
+}
 
 // ───────────────────────────── Ratio pill (FLIP) ─────────────────────────────
 let indicatorCtrl = null;
