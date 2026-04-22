@@ -13,3 +13,6 @@
 *.log
 .cache/
 tmp/
+
+# Local render-style experiments (not deployed)
+brush-preview.html

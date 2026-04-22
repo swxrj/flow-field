@@ -38,28 +38,6 @@ There is no drawing, painting, or input beyond a seed. Every click rolls a new r
 - [Motion](https://motion.dev) for UI springs, transitions, and the frame parallax tilt
 - Canvas 2D rendered with tapered filled polygons so each stroke reads as a variable-width ribbon
 
-## Running locally
-
-Just open `index.html` in a browser. That is genuinely the whole thing.
-
-If you want a local server (some browsers are stricter about module imports from `file://`):
-
-```bash
-python3 -m http.server 8080
-# then visit http://localhost:8080
-```
-
-## Deploying to GitHub Pages
-
-1. Push this folder to a GitHub repo called `flow-field`
-2. Repo → **Settings** → **Pages**
-3. Source: **Deploy from a branch**, branch `main`, folder `/ (root)`
-4. Save. Site goes live at `https://<username>.github.io/flow-field/` in about a minute
-
-Every subsequent `git push` to `main` auto-redeploys.
-
-For perfect social-media preview cards, update the `og:*` and `twitter:*` URLs in `index.html`'s `<head>` to absolute URLs (e.g. `https://<username>.github.io/flow-field/assets/preview.png`).
-
 ## Project layout
 
 ```

@@ -196,11 +196,12 @@
       min-height: 0;
     }
     #frame { max-width: 100%; }
-    /* Force the canvas to scale with its container. Overrides the inline
+    /* Force the art canvas to scale with its container. Overrides the inline
        width/height that the ratio-morph animation sets on desktop; on mobile
        the placeholder covers the ratio swap, so the morph animation has no
-       visual role. */
-    #frame canvas {
+       visual role. Scoped to `#c` so the 88×88 placeholder canvas isn't
+       stretched full-width (which made it look huge and blurry). */
+    #frame > canvas#c {
       width: 100% !important;
       height: auto !important;
       max-width: 100%;
