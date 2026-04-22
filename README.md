@@ -6,7 +6,7 @@ A deterministic flow-field generator that paints in your browser. Every output i
 
 ## Live demo
 
-https://&lt;username&gt;.github.io/flow-field/ _(update after deploying)_
+[swxrj.github.io/flow-field](https://swxrj.github.io/flow-field/)
 
 ## How it works
 
