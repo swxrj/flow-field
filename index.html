@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flow Field — Generative Artwork</title>
+<meta name="description" content="A deterministic flow-field generator. Every output is built from a layered velocity field and a palette, all derived from a single random seed.">
+<meta name="theme-color" content="#e8e4de">
+
+<!-- Social preview. For perfect rich-link cards, change the URLs below to absolute ones after deploying, e.g. https://<user>.github.io/flow-field/ and /assets/preview.png -->
+<meta property="og:title" content="Flow Field">
+<meta property="og:description" content="A deterministic flow-field generator. Every output is built from a layered velocity field and a palette, all derived from a single random seed.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="assets/preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Flow Field">
+<meta name="twitter:description" content="A deterministic flow-field generator. Every output is built from a layered velocity field and a palette, all derived from a single random seed.">
+<meta name="twitter:image" content="assets/preview.png">
+
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 22 C 9 6 17 28 28 10' stroke='%235a5248' stroke-width='3.5' fill='none' stroke-linecap='round'/></svg>">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #e8e4de;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 30px 20px;
+    font-family: 'Georgia', 'Times New Roman', serif;
+  }
+  #layout {
+    display: grid;
+    grid-template-columns: 720px 160px;
+    align-items: start;
+    gap: 40px;
+  }
+  #left {
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+    width: 720px;
+  }
+
+  /* Ratio bar */
+  #ratio-bar {
+    display: flex; gap: 6px; align-items: stretch;
+    position: relative;
+    padding: 2px;
+  }
+  .ratio-indicator {
+    position: absolute;
+    top: 2px; left: 2px;
+    background: #c8beb4;
+    border-radius: 6px;
+    z-index: 0;
+    pointer-events: none;
+    transform-origin: top left;
+    will-change: transform, width, height;
+  }
+  .ratio-btn {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+    cursor: pointer; background: transparent; border: none; padding: 6px 10px;
+    border-radius: 6px;
+    position: relative; z-index: 1;
+    will-change: transform;
+  }
+  .ratio-btn:hover:not(.active) { background: #d8d0c8; }
+  .ratio-icon { display: flex; align-items: center; justify-content: center; }
+  .ratio-icon svg { display: block; }
+  .ratio-label { font-size: 10px; color: #7a7068; letter-spacing: 0.06em; text-transform: uppercase; }
+
+  /* Canvas area: fixed-size stage. Frame inside changes size with ratio but stays centered. */
+  #canvas-area {
+    width: 720px;
+    height: 720px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    perspective: 1400px;
+    perspective-origin: 50% 50%;
+  }
+  #frame {
+    border: 10px solid #c8c0b4;
+    outline: 1px solid #b0a898;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12), 0 12px 36px rgba(0,0,0,0.10);
+    line-height: 0; overflow: hidden;
+    position: relative;
+    will-change: transform;
+    transform-style: preserve-3d;
+  }
+  canvas#c { display: block; }
+
+  /* Generating placeholder (covers canvas while worker builds new artwork) */
+  #placeholder {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 14px;
+    background: #e8e4de;
+    opacity: 1;
+    pointer-events: none;
+    z-index: 2;
+  }
+  #placeholder-canvas {
+    display: block;
+    border-radius: 50%;
+    opacity: 0.9;
+  }
+  .placeholder-text {
+    font-size: 12px; color: #7a7068;
+    font-style: italic; letter-spacing: 0.16em;
+    text-transform: lowercase;
+    animation: phPulse 1.6s ease-in-out infinite;
+  }
+  @keyframes phPulse {
+    0%, 100% { opacity: 0.45; }
+    50%      { opacity: 0.95; }
+  }
+
+  /* Meta (title + seed) — hidden until artwork finishes */
+  #meta { text-align: center; opacity: 0; }
+  #title { font-size: 16px; font-style: italic; color: #5a5248; letter-spacing: 0.02em; min-height: 20px; }
+  #title .word { display: inline-block; will-change: transform, opacity; }
+  #seed-label { font-size: 11px; color: #a09888; letter-spacing: 0.08em; margin-top: 4px; min-height: 13px; }
+
+  /* Controls — fixed strip on the right */
+  #controls {
+    display: flex; flex-direction: column; gap: 22px;
+    width: 160px;
+    position: sticky;
+    top: 40px;
+  }
+  .ctrl { display: flex; flex-direction: column; gap: 8px; }
+  .ctrl-header { display: flex; justify-content: space-between; align-items: baseline; }
+  .ctrl-label { font-size: 11px; color: #7a7068; letter-spacing: 0.06em; text-transform: uppercase; }
+  .ctrl-val { font-size: 13px; color: #5a5248; font-style: italic; min-width: 28px; text-align: right; display: inline-block; will-change: transform; transform-origin: right center; }
+  .section-label { font-size: 10px; color: #a09888; letter-spacing: 0.1em; text-transform: uppercase; padding-bottom: 2px; border-bottom: 1px solid #d0c8c0; }
+  .kbd-hint { font-size: 9px; color: #b0a898; letter-spacing: 0.08em; text-transform: uppercase; margin-top: 4px; line-height: 1.6; }
+  .kbd-hint kbd { font-family: 'Georgia', serif; font-style: italic; color: #7a7068; padding: 0 2px; }
+  input[type=range] {
+    width: 100%; -webkit-appearance: none; appearance: none;
+    height: 2px; background: #c8c0b4; border-radius: 2px; outline: none; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none; width: 14px; height: 14px;
+    border-radius: 50%; background: #5a5248; cursor: pointer;
+    transition: transform 0.12s ease, background 0.12s ease;
+  }
+  input[type=range]:active::-webkit-slider-thumb { transform: scale(1.25); background: #3a3230; }
+  input[type=range]::-webkit-slider-thumb:hover { background: #3a3230; }
+  input[type=range]::-moz-range-thumb {
+    width: 14px; height: 14px; border-radius: 50%; background: #5a5248; border: none; cursor: pointer;
+  }
+  .ctrl-btn {
+    padding: 9px 0; width: 100%; background: transparent;
+    border: 1px solid #b0a898; border-radius: 3px;
+    font-family: 'Georgia', serif; font-size: 13px; font-style: italic;
+    color: #5a5248; cursor: pointer; letter-spacing: 0.04em;
+    will-change: transform;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  }
+  .ctrl-btn:hover { background: #d8d0c8; color: #3a3028; border-color: #968e82; }
+  .ctrl-btn:disabled { opacity: 0.4; cursor: default; }
+  .ctrl-btn .btn-icon {
+    display: inline-block;
+    will-change: transform;
+    transform-origin: center center;
+  }
+
+  .stage-hidden { opacity: 0; }
+</style>
+</head>
+<body>
+<div id="layout">
+  <div id="left">
+
+    <div id="ratio-bar" class="stage-hidden">
+      <div class="ratio-indicator"></div>
+      <button class="ratio-btn active" data-ratio="1x1" title="1:1 — Profile">
+        <span class="ratio-icon">
+          <svg width="28" height="28" viewBox="0 0 28 28"><rect x="4" y="4" width="20" height="20" rx="2" fill="none" stroke="#5a5248" stroke-width="1.8"/></svg>
+        </span>
+        <span class="ratio-label">1 : 1</span>
+      </button>
+      <button class="ratio-btn" data-ratio="9x16" title="9:16 — Portrait Wallpaper">
+        <span class="ratio-icon">
+          <svg width="20" height="32" viewBox="0 0 20 32"><rect x="2" y="2" width="16" height="28" rx="2" fill="none" stroke="#5a5248" stroke-width="1.8"/></svg>
+        </span>
+        <span class="ratio-label">9 : 16</span>
+      </button>
+      <button class="ratio-btn" data-ratio="16x9" title="16:9 — Landscape Wallpaper">
+        <span class="ratio-icon">
+          <svg width="36" height="22" viewBox="0 0 36 22"><rect x="2" y="2" width="32" height="18" rx="2" fill="none" stroke="#5a5248" stroke-width="1.8"/></svg>
+        </span>
+        <span class="ratio-label">16 : 9</span>
+      </button>
+    </div>
+
+    <div id="canvas-area" class="stage-hidden">
+      <div id="frame">
+        <canvas id="c"></canvas>
+        <div id="placeholder">
+          <canvas id="placeholder-canvas" width="88" height="88"></canvas>
+          <div class="placeholder-text">generating</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="meta">
+      <div id="title"></div>
+      <div id="seed-label"></div>
+    </div>
+  </div>
+
+  <div id="controls" class="stage-hidden">
+    <div class="section-label">Field</div>
+    <div class="ctrl">
+      <div class="ctrl-header"><span class="ctrl-label">Thickness</span><span class="ctrl-val" id="val-thick">5</span></div>
+      <input type="range" id="sl-thick" min="1" max="10" step="1" value="5">
+    </div>
+    <div class="ctrl">
+      <div class="ctrl-header"><span class="ctrl-label">Density</span><span class="ctrl-val" id="val-density">5</span></div>
+      <input type="range" id="sl-density" min="1" max="10" step="1" value="5">
+    </div>
+    <div class="ctrl">
+      <div class="ctrl-header"><span class="ctrl-label">Color</span><span class="ctrl-val" id="val-color">5</span></div>
+      <input type="range" id="sl-color" min="1" max="10" step="1" value="5">
+    </div>
+    <button class="ctrl-btn" id="refresh" style="margin-top:4px"><span class="btn-icon" aria-hidden="true">&#8635;</span> new artwork</button>
+    <button class="ctrl-btn" id="download"><span class="btn-icon" aria-hidden="true">&#8595;</span> save image</button>
+    <div class="kbd-hint">
+      <kbd>space</kbd> new &nbsp;·&nbsp; <kbd>s</kbd> save<br>
+      <kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> ratio
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { animate, spring } from "https://cdn.jsdelivr.net/npm/motion@11/+esm";
+
+// ───────────────────────────── DOM refs ─────────────────────────────
+const canvas      = document.getElementById('c');
+const ctx         = canvas.getContext('2d');
+const frameEl     = document.getElementById('frame');
+const titleEl     = document.getElementById('title');
+const seedEl      = document.getElementById('seed-label');
+const ratioBar    = document.getElementById('ratio-bar');
+const canvasArea  = document.getElementById('canvas-area');
+const metaEl      = document.getElementById('meta');
+const controlsEl  = document.getElementById('controls');
+const indicator   = document.querySelector('.ratio-indicator');
+const refreshBtn  = document.getElementById('refresh');
+const downloadBtn = document.getElementById('download');
+const placeholderEl = document.getElementById('placeholder');
+const placeholderCanvas = document.getElementById('placeholder-canvas');
+
+// ───────────────────────────── State ─────────────────────────────
+const RATIOS = {
+  '1x1':  { W: 500, H: 500,  expW: 2000, expH: 2000  },
+  '9x16': { W: 390, H: 693,  expW: 1080, expH: 1920  },
+  '16x9': { W: 693, H: 390,  expW: 1920, expH: 1080  },
+};
+let currentRatio = '1x1';
+let W = RATIOS[currentRatio].W, H = RATIOS[currentRatio].H;
+canvas.width = W; canvas.height = H;
+
+let offscreen = document.createElement('canvas');
+let offCtx = offscreen.getContext('2d');
+offscreen.width = W; offscreen.height = H;
+
+let SEED, palette, cols, accentCols, F, T0, paintingTitle;
+let allStrokes = [];
+
+// ───────────────────────────── PRNG / palettes ─────────────────────────────
+function mulberry32(s) {
+  return function() {
+    s |= 0; s = s + 0x6D2B79F5 | 0;
+    let t = Math.imul(s ^ s>>>15, 1|s);
+    t = t + Math.imul(t ^ t>>>7, 61|t) ^ t;
+    return ((t ^ t>>>14) >>> 0) / 4294967296;
+  };
+}
+let rng;
+function r(a,b){ return a+rng()*(b-a); }
+function pick(arr){ return arr[Math.floor(rng()*arr.length)]; }
+
+const PALETTES = [
+  { name:'dusk',     colors:['#c97db5','#e8a87c','#d4607a','#b784a7','#e06090','#c05878','#a03060','#d890b0','#f0a0c0','#e87040'], bgs:['#f5ede8','#f7e8ef','#f2e8f0','#fdf0e8','#f8eae0'] },
+  { name:'ocean',    colors:['#2a7898','#4a9aba','#1a5878','#3d8aaa','#5aaac8','#184868','#287898','#0a3858','#70c0d8','#1868a0'], bgs:['#e8f2f7','#eaf4f8','#e4eef5','#f0f7fa','#ddeef5'] },
+  { name:'forest',   colors:['#3a7a3a','#5a9a3a','#287828','#4a8a2a','#6aaa4a','#185818','#388030','#206820','#80b040','#284820'], bgs:['#eaf2e8','#ecf5e8','#e8f0e4','#f0f5e8','#e4f0e0'] },
+  { name:'ember',    colors:['#b83010','#d84020','#c83818','#e05028','#a82810','#f07040','#882808','#d06028','#f09050','#a04010'], bgs:['#f7ece8','#f8ede8','#f5e8e4','#fdf0ea','#f2e8e0'] },
+  { name:'sand',     colors:['#907040','#b09060','#786030','#a08050','#c0a870','#584018','#886038','#d0b880','#706030','#a87840'], bgs:['#f5f0e8','#f8f2e8','#f2ece0','#faf5e8','#ede8dc'] },
+  { name:'violet',   colors:['#5030a0','#7050c0','#401888','#6040b0','#9070d0','#200858','#5038a8','#8060c8','#301878','#7848b8'], bgs:['#eeeaf7','#f0ecf8','#e8e4f5','#f4f0fa','#e4e0f2'] },
+  { name:'rust',     colors:['#a04828','#c06038','#803820','#b05030','#d07848','#702810','#906040','#c08060','#a05828','#e09060'], bgs:['#f5ede8','#f7ece6','#f2e8e2','#faf0e8','#ede4dc'] },
+  { name:'slate',    colors:['#405870','#607890','#304860','#507080','#708898','#203848','#506878','#80a0b0','#284858','#608898'], bgs:['#eaeff2','#ecf0f5','#e4ecf0','#f0f4f7','#e0eaef'] },
+  { name:'blush',    colors:['#f4c2c2','#e8a5b2','#d4869e','#c06688','#eab6c0','#d88aa0','#be5e7a','#ecc5cc','#a85070','#f0b5bf'], bgs:['#faf0ee','#fdf2ef','#f8ebe8','#fcf5f2','#f0e4e0'] },
+  { name:'moss',     colors:['#5a7050','#6d8560','#485842','#7d9070','#4a6040','#657a58','#8fa080','#3a4a35','#758a68','#556848'], bgs:['#ecf0e4','#eef2e6','#e8ece0','#f0f4ea','#e4e8dc'] },
+  { name:'midnight', colors:['#1a2848','#2a3858','#0a1838','#3a4868','#08102a','#4a5878','#606890','#1a1a3a','#354a68','#282850'], bgs:['#dae0f0','#d4dae8','#e0e6f4','#d0d8e6','#dce2f2'] },
+  { name:'coral',    colors:['#e88070','#f09080','#d86850','#f4a090','#c05038','#e87060','#f5b0a0','#a84828','#d88070','#e09060'], bgs:['#fdebe4','#ffeee4','#faf0ea','#fde8e0','#f5ede4'] },
+  { name:'sage',     colors:['#8a9a78','#a0b090','#6a7a58','#b0bca0','#758868','#95a582','#c0ccac','#5a6848','#889880','#7d8c6a'], bgs:['#eff3e8','#f2f5eb','#e9eee0','#f4f7ec','#ebefe2'] },
+  { name:'stone',    colors:['#888070','#a0988a','#6a6458','#b8b0a0','#504838','#766a58','#948870','#5a5048','#a89a80','#786c5a'], bgs:['#eae5dc','#e8e2d8','#ece7e0','#e2dcd2','#efeae2'] },
+  { name:'plum',     colors:['#6a2858','#8a3878','#4a1840','#9a4888','#7a3060','#a85898','#521838','#b870a8','#702858','#8a4878'], bgs:['#eee2ed','#f0e4f0','#e8dce8','#f2e6f2','#e4d8e4'] },
+  { name:'wheat',    colors:['#c0a058','#d0b068','#a88840','#dcbc78','#987838','#b09860','#e8c888','#805828','#cab080','#b09054'], bgs:['#f5eedd','#f7efe0','#f0e8d5','#faf2e2','#ede4d4'] },
+];
+// Shared word banks — combined with per-palette heads/nouns via 4 structural
+// templates in makeTitle. Combinatorics produce ~1M+ distinct title strings
+// across the 16 palettes.
+const SHARED_PREFIX = [
+  'Quiet','Restless','Unhurried','Distant','Half-lit','Tender','Bright','Bare',
+  'Silver','Wild','Hollow','Certain','Uncertain','Faint','Soft','Slow','Open',
+  'Patient','Empty','Familiar','Sudden','Gentle','Sharp','Small','Grand',
+  'Late','Early','Loose','Simple','Candid',
+];
+const SHARED_CONNECTOR = ['at','in','of','before','after','beyond','through','near'];
+const SHARED_TAIL = [
+  'in Pale Light','at the Edge','of the Hour','without Name','from the Window',
+  'in Passing','on Waking','between Breaths','in the Margin','after Rain',
+  'before Sleep','in Recollection','at the Threshold','in Silence','without Weight',
+  'in Half-tones','at the Hour','in Negative Space','without Urgency','at Low Tide',
+];
+const TITLE_PARTS = {
+  dusk:     { heads: ['Reverie','Blush','Ache','Tender','Longing','Elegy','Murmur','Confession','Whisper','Aubade','Hush','Ember','Vespers','Nocturne','Swoon'],
+              nouns: ['Dusk','Rose','Evening','Pink Light','Magenta','Twilight','Blush','Amaranth','the Afterglow','Carmine','the Fading','Fever','the Gloaming','Pastel','the Spell'] },
+  ocean:    { heads: ['Drift','Current','Still','Deep','Tidal','Undertow','Meridian','Fathom','Ripple','Salt','Glassy','Hush','Surge','Brine','Sound'],
+              nouns: ['Blue','Low Tide','the Deep','Silence','the Shallows','Wake','Channel','the Cove','Azure','the Gulf','the Bay','the Estuary','Marine','the Lagoon','Kelp'] },
+  forest:   { heads: ['Growth','Canopy','Verdant','Quiet','Wild','Fern','Mossy','Dappled','Leaf','Understory','Thicket','Sprig','Green','Wooded','Quickening'],
+              nouns: ['Green','Rain','Noon','the Shade','the Clearing','Moss','Undergrowth','Fern','the Hollow','Lichen','the Grove','Resin','the Canopy','Pine','Chlorophyll'] },
+  ember:    { heads: ['Fever','Blaze','Kindling','Smolder','Fierce','Ember','Brimstone','Spark','Scorch','Crimson','Ignition','Pyre','Heatwave','Hot','Flare'],
+              nouns: ['Red','Dark','the Edge','Fire','the Coals','Embers','the Flame','Cinders','Scarlet','the Pyre','the Furnace','Ruby','the Blaze','Iron','the Kiln'] },
+  sand:     { heads: ['Warmth','Sediment','Golden','Patient','Drift','Slow','Dusted','Sunbleached','Weathered','Quiet','Simple','Ochre','Arid','Grained','Still'],
+              nouns: ['Ochre','Midday','the Light','Dry Earth','the Dune','Beige','the Verge','Silt','the Flat','the Wash','the Bluff','Dust','the Plain','Clay','the Bed'] },
+  violet:   { heads: ['Depth','Mystery','Nocturne','Haze','Dreaming','Hush','Shadow','Velvet','Lilac','Opaque','Softened','Spellbound','Indigo','Midnight','Iris'],
+              nouns: ['Violet','Sleep','the Dark','the Unseen','Twilight','the Hour','the Dusk','Lavender','the Threshold','the Night','the Veil','Amethyst','the Lull','Eclipse','the Cell'] },
+  rust:     { heads: ['Erosion','Patina','Worn','Time','Weathered','Slow','Aged','Oxidized','Lichened','Crumbling','Antique','Tarnished','Chipped','Gilt','Mellow'],
+              nouns: ['Rust','Age','Copper','the Undoing','the Iron','Oxide','the Fence','the Kettle','Bronze','the Rafter','the Hinge','Patina','the Tin','Verdigris','the Yard'] },
+  slate:    { heads: ['Clarity','Distance','Mist','Stillness','Echo','Grey','Cool','Gauzy','Overcast','Pallid','Faded','Quiet','Resolute','Unspoken','Glacial'],
+              nouns: ['Grey','Water','Morning','Haze','the Fog','the Ridge','the Quay','the Outline','Stone','the Bluff','the Harbor','Ash','the Cliff','the Pier','the Gable'] },
+  blush:    { heads: ['Tenderness','Softness','Flush','Bloom','Cheek','Hush','Petal','Sweet','Dewy','Coy','Rosewater','Unspoken','Gentle','Innocent','Porcelain'],
+              nouns: ['Rose','Petal','the Girl','the Letter','Pink','the Lip','the Blush','Peony','the Smile','the Cheek','the Ribbon','Powder','the Silk','Apricot','the Bouquet'] },
+  moss:     { heads: ['Hush','Verdancy','Quiet','Patient','Stillness','Damp','Ancient','Sprouting','Lichened','Shaded','Cool','Dewed','Creeping','Soft','Mycelial'],
+              nouns: ['Moss','the Log','the Stone','the Shade','Undergrowth','the Root','the Spring','the Grove','the Cave','the Hollow','the Creek','Lichen','the Bank','the Forest Floor','the Trail'] },
+  midnight: { heads: ['Nocturne','Silence','Star','Lull','Obsidian','Dream','Pitch','Deep','Cavernous','Insomnia','Veiled','Lone','Distant','Celestial','Remote'],
+              nouns: ['Dark','Night','Indigo','the Void','the Sky','the Hour','the Cosmos','the Well','the Abyss','Midnight','the Silence','the Orbit','the Constellation','the Field','Ink'] },
+  coral:    { heads: ['Warm','Bright','Sunlit','Flush','Gleam','Burnished','Glowing','Tropical','Fresh','Ripe','Soft','Honeyed','Vivid','Rosy','Lively'],
+              nouns: ['Coral','the Cheek','the Peach','the Morning','Salmon','the Sunrise','Papaya','the Tide','the Shell','the Bloom','the Flesh','the Petal','Guava','the Flame','the Juice'] },
+  sage:     { heads: ['Dusty','Quiet','Pale','Washed','Soft','Airy','Weathered','Cool','Sun-faded','Gentle','Muted','Antique','Shaded','Serene','Patient'],
+              nouns: ['Sage','the Herb','the Field','the Stem','the Garden','Rosemary','the Hillside','Olive','the Thistle','the Yard','the Pasture','Pewter','the Cuttings','Linen','the Meadow'] },
+  stone:    { heads: ['Weight','Grey','Plain','Unadorned','Solid','Lichened','Quiet','Smooth','Cool','Silent','Simple','Patient','Rough','Worn','Mute'],
+              nouns: ['Stone','the Wall','the Cairn','the Path','Flint','the Quarry','Granite','the Courtyard','the Hearth','the Basalt','the Lintel','the Pier','the Step','Slate','the Monument'] },
+  plum:     { heads: ['Velvet','Regal','Rich','Lush','Steeped','Soft','Deep','Bruised','Dark','Ripe','Moody','Ornate','Wine','Purpled','Sumptuous'],
+              nouns: ['Plum','the Wine','the Orchid','the Robe','Mulberry','the Bruise','the Grape','the Cushion','Aubergine','the Figment','the Confession','the Cloister','Damson','the Curtain','the Velvet'] },
+  wheat:    { heads: ['Golden','Honey','Sunlit','Ripened','Warm','Glowing','Late','Harvest','Dry','Husked','Amber','Lazy','Sweetened','Patient','Burnished'],
+              nouns: ['Wheat','the Field','the Harvest','the Straw','the Grain','Honey','the Bale','the Loaf','the Chaff','the Barn','the Hayloft','the Threshing','Brass','the Bread','the Kernel'] },
+};
+
+function makeTitle(p) {
+  const t = TITLE_PARTS[p.name];
+  const h    = pick(t.heads);
+  const n    = pick(t.nouns);
+  const pre  = pick(SHARED_PREFIX);
+  const con  = pick(SHARED_CONNECTOR);
+  const tail = pick(SHARED_TAIL);
+  const s = Math.floor(rng() * 4);
+  if (s === 0) return `${h} ${con} ${n}`;
+  if (s === 1) return `${pre} ${h}, ${n}`;
+  if (s === 2) return `${h} ${n}, ${tail}`;
+  return `${pre} ${n} ${con} ${h}`;
+}
+
+// ───────────────────────── Web Worker (stroke generation) ─────────────────────────
+const workerSource = `
+let F, T0, cols, accents;
+
+function mulberry32(s) {
+  return function() {
+    s |= 0; s = s + 0x6D2B79F5 | 0;
+    let t = Math.imul(s ^ s>>>15, 1|s);
+    t = t + Math.imul(t ^ t>>>7, 61|t) ^ t;
+    return ((t ^ t>>>14) >>> 0) / 4294967296;
+  };
+}
+
+function fieldAngle(x, y, w, h) {
+  const nx = x/w, ny = y/h; let a = 0;
+  a += Math.sin(nx*F[0].fx + ny*F[0].fy + T0) * Math.PI * F[0].g;
+  a += Math.cos(nx*F[1].fy - ny*F[1].fx*1.3 + T0*1.2) * Math.PI * F[1].g;
+  a += Math.sin((nx+ny)*F[2].fx + T0*0.6) * Math.PI * F[2].g;
+  a += Math.cos((nx-ny*0.5)*F[3].fx + T0*0.9) * Math.PI * F[3].g;
+  return a;
+}
+
+// Sequential-decay builder: a single artwork is one long cascade starting
+// from the thickest stroke (set by thick slider) and each next stroke gets
+// slightly thinner and slightly more curvy, down to a ~2px hair line. Fewer
+// rolls of the dice per stroke (a handful of placement attempts, not thousands)
+// means the shape of the piece is mostly determined by the field + seed.
+function buildStrokes(SEED, thickVal, densityVal, colorVal, w, h) {
+  const crng = mulberry32(SEED + 999);
+
+  // Per-artwork constants (consumed first so seed determinism holds)
+  const baseCurvy = 1.2 + crng() * 0.5;          // field-angle base multiplier
+  const curveGain = 1.4;                         // thin strokes get up to ~2.6x curvy
+
+  // Palette subset. Colour slider:
+  //   1  → 1 colour total (monochrome)
+  //   10 → 4+ distinct colours, at least half of them from OTHER palettes so
+  //        we get real hue variety rather than just shades.
+  // Shuffle the base palette with crng so the same seed + colour value
+  // always picks the same subset.
+  const pool = cols.slice();
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(crng() * (i + 1));
+    const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+  }
+  // Palette colour count ramps 1 → 4 across the slider.
+  const nPalette = Math.max(1, Math.min(pool.length,
+    Math.round(1 + (colorVal - 1) * 3 / 9)
+  ));
+  // Cross-palette accents ramp 0 → 3 so colour=10 has hue shifts, not just shades.
+  let nAccents;
+  if (colorVal <= 3)      nAccents = 0;
+  else if (colorVal <= 5) nAccents = 1;
+  else if (colorVal <= 7) nAccents = 2;
+  else                    nAccents = 3;    // 8–10
+
+  const activeCols = pool.slice(0, nPalette);
+  if (accents && accents.length) {
+    const accPool = accents.slice();
+    for (let i = accPool.length - 1; i > 0; i--) {
+      const j = Math.floor(crng() * (i + 1));
+      const tmp = accPool[i]; accPool[i] = accPool[j]; accPool[j] = tmp;
+    }
+    for (let i = 0; i < nAccents && i < accPool.length; i++) {
+      activeCols.push(accPool[i]);
+    }
+  }
+  const acpick = () => activeCols[Math.floor(crng() * activeCols.length)];
+  const acpickDistinct = (exclude) => {
+    if (activeCols.length < 2) return activeCols[0];
+    let c;
+    for (let t = 0; t < 8; t++) {
+      c = acpick();
+      if (c !== exclude) return c;
+    }
+    return c;
+  };
+
+  const sizeScale = Math.sqrt((w * h) / (500 * 500));
+
+  // Thick slider → starting thickness (6 → 36). Minimum is fixed at 2px.
+  // Slider=10 now maps to what slider=5 used to hit, and slider=1 is much
+  // finer so you can dial in delicate, web-like pieces as well as chunky ones.
+  const thickMaxBase = 6 + (thickVal - 1) * (10 / 3);
+  const thickMax = thickMaxBase * sizeScale;
+  const thickMin = 2 * sizeScale;
+
+  // Density slider → target stroke count (how far down the decay chain we go).
+  const N = 18 + (densityVal - 1) * 22;            //  18 → 216
+
+  // Fixed moderate wobble around each decay target so the sequence has
+  // character without being perfectly geometric.
+  const jitter = 0.35;
+
+  // Occupancy grid
+  const GRID = 5;
+  const invG = 1 / GRID;
+  const gw = Math.ceil(w / GRID);
+  const gh = Math.ceil(h / GRID);
+  const grid = new Uint8Array(gw * gh);
+
+  function markDisk(cx, cy, r) {
+    const gr = r * invG;
+    const x0 = Math.max(0, Math.floor((cx - r) * invG));
+    const x1 = Math.min(gw - 1, Math.ceil((cx + r) * invG));
+    const y0 = Math.max(0, Math.floor((cy - r) * invG));
+    const y1 = Math.min(gh - 1, Math.ceil((cy + r) * invG));
+    const gcx = cx * invG, gcy = cy * invG, r2 = gr * gr;
+    for (let gy = y0; gy <= y1; gy++) {
+      const rowBase = gy * gw;
+      const dy = gy + 0.5 - gcy;
+      const dy2 = dy * dy;
+      for (let gx = x0; gx <= x1; gx++) {
+        const dx = gx + 0.5 - gcx;
+        if (dx * dx + dy2 <= r2) grid[rowBase + gx] = 1;
+      }
+    }
+  }
+  function diskFree(cx, cy, r) {
+    const gr = r * invG;
+    const x0 = Math.max(0, Math.floor((cx - r) * invG));
+    const x1 = Math.min(gw - 1, Math.ceil((cx + r) * invG));
+    const y0 = Math.max(0, Math.floor((cy - r) * invG));
+    const y1 = Math.min(gh - 1, Math.ceil((cy + r) * invG));
+    const gcx = cx * invG, gcy = cy * invG, r2 = gr * gr;
+    for (let gy = y0; gy <= y1; gy++) {
+      const rowBase = gy * gw;
+      const dy = gy + 0.5 - gcy;
+      const dy2 = dy * dy;
+      for (let gx = x0; gx <= x1; gx++) {
+        const dx = gx + 0.5 - gcx;
+        if (dx * dx + dy2 <= r2 && grid[rowBase + gx]) return false;
+      }
+    }
+    return true;
+  }
+
+  // Trace one stroke along the field starting at (sx, sy). Returns null if
+  // the stroke can't start, collides too early, or is too short for its weight.
+  function trace(sx, sy, thick, curvy) {
+    const half = thick * 0.5;
+    const pad = Math.max(1.5, thick * 0.08);
+    const checkR = half + pad;
+    if (sx < half + 1 || sx > w - half - 1 || sy < half + 1 || sy > h - half - 1) return null;
+    if (!diskFree(sx, sy, checkR)) return null;
+
+    const stepLen = Math.max(1.8, Math.min(3.6, thick * 0.11)) * sizeScale;
+    const maxSteps = thick < 8 ? 320 : 240;
+
+    const fwd = [];
+    let px = sx, py = sy;
+    for (let s = 0; s < maxSteps; s++) {
+      const a = fieldAngle(px, py, w, h) * curvy;
+      const nx = px + Math.cos(a) * stepLen;
+      const ny = py + Math.sin(a) * stepLen;
+      if (nx < half || nx > w - half || ny < half || ny > h - half) break;
+      if (!diskFree(nx, ny, checkR)) break;
+      fwd.push({ x: nx, y: ny });
+      px = nx; py = ny;
+    }
+    const bwd = [];
+    px = sx; py = sy;
+    for (let s = 0; s < maxSteps; s++) {
+      const a = fieldAngle(px, py, w, h) * curvy + Math.PI;
+      const nx = px + Math.cos(a) * stepLen;
+      const ny = py + Math.sin(a) * stepLen;
+      if (nx < half || nx > w - half || ny < half || ny > h - half) break;
+      if (!diskFree(nx, ny, checkR)) break;
+      bwd.push({ x: nx, y: ny });
+      px = nx; py = ny;
+    }
+
+    const path = [];
+    for (let i = bwd.length - 1; i >= 0; i--) path.push(bwd[i]);
+    path.push({ x: sx, y: sy });
+    for (const p of fwd) path.push(p);
+
+    const minLen = thick < 6 ? 14 : Math.max(10, Math.ceil((thick * 1.8) / stepLen));
+    if (path.length < minLen) return null;
+    return path;
+  }
+
+  const strokes = [];
+  const margin = 6;
+  const attemptsPerStroke = 8;
+
+  for (let i = 0; i < N; i++) {
+    const u = N === 1 ? 1 : i / (N - 1);
+    // Geometric decay from thickMax to thickMin across the sequence
+    const baseThick = thickMax * Math.pow(thickMin / thickMax, u);
+    // Jitter as a multiplicative wobble around the target
+    const wobble = 1 + (crng() * 2 - 1) * jitter * 0.35;
+    const thick  = Math.max(thickMin, Math.min(thickMax, baseThick * wobble));
+    const curvy  = baseCurvy * (1 + u * curveGain);
+
+    // Thin strokes get more placement attempts since the canvas is more
+    // crowded by the time they're laid down.
+    const tries = thick < 5 ? attemptsPerStroke + 6 : attemptsPerStroke;
+    let path = null;
+    for (let t = 0; t < tries; t++) {
+      const sx = margin + crng() * (w - 2 * margin);
+      const sy = margin + crng() * (h - 2 * margin);
+      path = trace(sx, sy, thick, curvy);
+      if (path) break;
+    }
+    if (!path) continue;
+
+    const half = thick * 0.5;
+    for (const p of path) markDisk(p.x, p.y, half + 1);
+
+    // 1-3 colour bands along the stroke. Very thin strokes stay single-colour
+    // so the bands don't read as muddy hyphens. Also capped by how many
+    // distinct colours are even available in activeCols.
+    const last = path.length - 1;
+    const colorRoll = crng();
+    let numColors;
+    if (activeCols.length === 1 || thick < 6) numColors = 1;
+    else if (activeCols.length === 2)         numColors = colorRoll < 0.5 ? 1 : 2;
+    else                                      numColors = colorRoll < 0.48 ? 1 : colorRoll < 0.84 ? 2 : 3;
+
+    const segments = [];
+    if (numColors === 1) {
+      segments.push({ start: 0, end: last, color: acpick() });
+    } else if (numColors === 2) {
+      const splitU = 0.22 + crng() * 0.56;
+      const i1 = Math.max(1, Math.min(last - 1, Math.floor(last * splitU)));
+      const c0 = acpick();
+      const c1 = acpickDistinct(c0);
+      segments.push({ start: 0,  end: i1,   color: c0 });
+      segments.push({ start: i1, end: last, color: c1 });
+    } else {
+      const u1 = 0.18 + crng() * 0.28;
+      const u2 = u1 + 0.18 + crng() * 0.28;
+      const i1 = Math.max(1, Math.min(last - 2, Math.floor(last * u1)));
+      const i2 = Math.max(i1 + 1, Math.min(last - 1, Math.floor(last * u2)));
+      const c0 = acpick();
+      const c1 = acpickDistinct(c0);
+      const c2 = acpickDistinct(c1);
+      segments.push({ start: 0,  end: i1,   color: c0 });
+      segments.push({ start: i1, end: i2,   color: c1 });
+      segments.push({ start: i2, end: last, color: c2 });
+    }
+
+    strokes.push({ path, thick, segments });
+  }
+
+  return strokes;
+}
+
+self.onmessage = (e) => {
+  const d = e.data;
+  F = d.F; T0 = d.T0; cols = d.cols; accents = d.accents || [];
+  const strokes = buildStrokes(d.seed, d.thick, d.density, d.color, d.w, d.h);
+  self.postMessage({ id: d.id, kind: d.kind, strokes });
+};
+`;
+
+const worker = new Worker(URL.createObjectURL(new Blob([workerSource], { type: 'application/javascript' })));
+
+// Live pipeline (slider drags): coalesce latest, always instant render.
+let jobCounter = 0;
+let workerBusy = false;
+let pendingJobParams = null;
+const oneOffCallbacks = new Map();
+
+function postLiveJob(params) {
+  if (workerBusy) {
+    pendingJobParams = params;
+    return;
+  }
+  workerBusy = true;
+  const id = ++jobCounter;
+  worker.postMessage({ id, kind: 'live', ...params });
+}
+
+function workerOneOff(params) {
+  return new Promise(resolve => {
+    const id = ++jobCounter;
+    oneOffCallbacks.set(id, resolve);
+    worker.postMessage({ id, kind: 'oneoff', ...params });
+  });
+}
+
+worker.onmessage = (e) => {
+  const { id, kind, strokes } = e.data;
+
+  if (kind === 'oneoff') {
+    const cb = oneOffCallbacks.get(id);
+    if (cb) { cb(strokes); oneOffCallbacks.delete(id); }
+    return;
+  }
+
+  workerBusy = false;
+
+  if (pendingJobParams) {
+    const p = pendingJobParams;
+    pendingJobParams = null;
+    postLiveJob(p);
+    return;
+  }
+
+  allStrokes = strokes;
+  renderCurrent();
+};
+
+function requestLiveStrokes() {
+  postLiveJob({
+    seed: SEED, F, T0, cols, accents: accentCols,
+    thick:   +sliders.thick.value,
+    density: +sliders.density.value,
+    color:   +sliders.color.value,
+    w: W, h: H,
+  });
+}
+
+// ───────────────────────────── Rendering ─────────────────────────────
+// Render strokes as filled polygons built from per-point perpendiculars, so we
+// can taper the width along the length — each stroke tapers from its peak
+// thickness (middle) down to ~1px at both ends via a smoothstep ease. Multi-
+// colour bands share the same taper profile and meet at identical edge points
+// so they abut cleanly.
+function fillBand(tctx, path, nxs, nys, thk, start, end, color) {
+  tctx.fillStyle = color;
+  tctx.beginPath();
+  for (let i = start; i <= end; i++) {
+    const h = thk[i] * 0.5;
+    const px = path[i].x + nxs[i] * h;
+    const py = path[i].y + nys[i] * h;
+    if (i === start) tctx.moveTo(px, py);
+    else tctx.lineTo(px, py);
+  }
+  for (let i = end; i >= start; i--) {
+    const h = thk[i] * 0.5;
+    tctx.lineTo(path[i].x - nxs[i] * h, path[i].y - nys[i] * h);
+  }
+  tctx.closePath();
+  tctx.fill();
+}
+
+function drawStrokes(tctx, strokes) {
+  for (const s of strokes) {
+    const path = s.path;
+    if (!path || path.length < 2) continue;
+    const pathLen = path.length;
+    const maxT = s.thick;
+
+    // Taper length in path-point units. Scales with thickness so chunky strokes
+    // ease in/out gradually while thin ones still taper visibly, but capped at
+    // a third of the path so we always have a full-width middle section.
+    const taperLen = Math.min(
+      Math.floor(pathLen / 3),
+      Math.max(4, Math.ceil(maxT * 1.5))
+    );
+
+    // Precompute per-point normal direction and tapered thickness.
+    const nxs = new Array(pathLen);
+    const nys = new Array(pathLen);
+    const thk = new Array(pathLen);
+    for (let i = 0; i < pathLen; i++) {
+      const prev = path[i > 0 ? i - 1 : 0];
+      const next = path[i < pathLen - 1 ? i + 1 : pathLen - 1];
+      const dx = next.x - prev.x;
+      const dy = next.y - prev.y;
+      const len = Math.hypot(dx, dy) || 1;
+      nxs[i] = -dy / len;
+      nys[i] =  dx / len;
+
+      const d = i < pathLen - 1 - i ? i : pathLen - 1 - i;
+      if (d >= taperLen) {
+        thk[i] = maxT;
+      } else {
+        const u = d / taperLen;
+        thk[i] = 1 + (maxT - 1) * (u * u * (3 - 2 * u));
+      }
+    }
+
+    const segs = s.segments;
+    if (segs) {
+      for (let k = 0; k < segs.length; k++) {
+        const seg = segs[k];
+        if (seg.end <= seg.start) continue;
+        fillBand(tctx, path, nxs, nys, thk, seg.start, seg.end, seg.color);
+      }
+    } else {
+      fillBand(tctx, path, nxs, nys, thk, 0, pathLen - 1, s.color);
+    }
+  }
+}
+
+function renderToCanvas(tgt, tctx, strokes, w, h, bg) {
+  tctx.fillStyle = bg;
+  tctx.fillRect(0, 0, w, h);
+  drawStrokes(tctx, strokes);
+}
+
+function renderCurrent() {
+  if (!allStrokes.length) return;
+  renderToCanvas(canvas, ctx, allStrokes, W, H, palette.bg);
+  renderToCanvas(offscreen, offCtx, allStrokes, W, H, palette.bg);
+}
+
+// ───────────────────────── Placeholder (infinity loop) ─────────────────────────
+const pctx = placeholderCanvas.getContext('2d');
+const PW = placeholderCanvas.width, PH = placeholderCanvas.height;
+let phRaf = null;
+let phStart = 0;
+
+// Pre-build the infinity (Gerono lemniscate) polyline so we don't recompute
+// trig each frame.
+const INF_POINTS = (() => {
+  const pts = [];
+  const N = 160;
+  const cx = PW / 2, cy = PH / 2;
+  const a = PW / 2 - 12;
+  for (let i = 0; i <= N; i++) {
+    const u = (i / N) * Math.PI * 2;
+    const s = Math.sin(u), c = Math.cos(u);
+    pts.push({
+      x: cx + a * c,
+      y: cy + a * s * c,
+    });
+  }
+  return pts;
+})();
+
+function traceInfinity(tctx) {
+  tctx.beginPath();
+  tctx.moveTo(INF_POINTS[0].x, INF_POINTS[0].y);
+  for (let i = 1; i < INF_POINTS.length; i++) {
+    tctx.lineTo(INF_POINTS[i].x, INF_POINTS[i].y);
+  }
+}
+
+function placeholderFrame(now) {
+  if (!phStart) phStart = now;
+  const t = (now - phStart) / 1000;
+
+  pctx.clearRect(0, 0, PW, PH);
+
+  pctx.save();
+  pctx.beginPath();
+  pctx.arc(PW / 2, PH / 2, PW / 2 - 1, 0, Math.PI * 2);
+  pctx.clip();
+
+  pctx.fillStyle = '#ece7e0';
+  pctx.fillRect(0, 0, PW, PH);
+
+  pctx.lineCap = 'round';
+  pctx.lineJoin = 'round';
+
+  // Ghost outline — faint full infinity
+  pctx.strokeStyle = 'rgba(122, 112, 100, 0.22)';
+  pctx.lineWidth = 2;
+  pctx.setLineDash([]);
+  traceInfinity(pctx);
+  pctx.stroke();
+
+  // Thick flowing dashes riding the infinity curve
+  pctx.strokeStyle = '#5a5248';
+  pctx.lineWidth = 7;
+  pctx.setLineDash([16, 30]);
+  pctx.lineDashOffset = -t * 52;
+  traceInfinity(pctx);
+  pctx.stroke();
+  pctx.setLineDash([]);
+
+  pctx.restore();
+  phRaf = requestAnimationFrame(placeholderFrame);
+}
+
+function startPlaceholderLoop() {
+  if (phRaf) return;
+  phStart = 0;
+  phRaf = requestAnimationFrame(placeholderFrame);
+}
+function stopPlaceholderLoop() {
+  if (phRaf) { cancelAnimationFrame(phRaf); phRaf = null; }
+}
+
+let phCtrl = null;
+function showPlaceholder() {
+  startPlaceholderLoop();
+  if (phCtrl) { try { phCtrl.stop(); } catch(_){} }
+  placeholderEl.style.display = 'flex';
+  phCtrl = animate(placeholderEl, { opacity: 1 }, { duration: 0.18, ease: 'easeOut' });
+}
+function hidePlaceholder() {
+  if (phCtrl) { try { phCtrl.stop(); } catch(_){} }
+  phCtrl = animate(placeholderEl, { opacity: 0 }, { duration: 0.28, ease: 'easeOut' });
+  const done = phCtrl.finished || phCtrl;
+  Promise.resolve(done).then(() => {
+    stopPlaceholderLoop();
+    placeholderEl.style.display = 'none';
+  }).catch(() => {});
+}
+
+// ───────────────────────────── Meta (title + seed) ─────────────────────────────
+let metaCtrl = null;
+let wordAnims = [];
+function stopWordAnims() {
+  wordAnims.forEach(a => { try { a.stop(); } catch(_){} });
+  wordAnims = [];
+}
+function hideMeta() {
+  stopWordAnims();
+  if (metaCtrl) { try { metaCtrl.stop(); } catch(_){} }
+  metaCtrl = animate(metaEl, { opacity: 0 }, { duration: 0.14, ease: 'easeIn' });
+}
+function showMeta() {
+  stopWordAnims();
+  // Build the title as per-word spans so each word can stagger in.
+  const words = paintingTitle.split(' ');
+  titleEl.innerHTML = words.map(w => {
+    const safe = w.replace(/[&<>"']/g, ch => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[ch]));
+    return `<span class="word" style="opacity:0">${safe}</span>`;
+  }).join(' ');
+  seedEl.textContent = 'no. ' + SEED;
+  seedEl.style.opacity = '0';
+
+  metaEl.style.opacity = '1';
+  metaEl.style.transform = '';
+
+  const wordEls = titleEl.querySelectorAll('.word');
+  wordEls.forEach((el, i) => {
+    wordAnims.push(animate(
+      el,
+      { opacity: [0, 1], y: [8, 0] },
+      { duration: 0.42, delay: i * 0.05, ease: [0.2, 0.7, 0.3, 1] }
+    ));
+  });
+  if (metaCtrl) { try { metaCtrl.stop(); } catch(_){} }
+  metaCtrl = animate(
+    seedEl,
+    { opacity: [0, 1], y: [4, 0] },
+    { duration: 0.3, delay: 0.08 + wordEls.length * 0.05, ease: 'easeOut' }
+  );
+}
+
+// ───────────────────────────── Seeding & ratio ─────────────────────────────
+function initSeed(seed) {
+  SEED = seed;
+  rng = mulberry32(SEED);
+  palette = pick(PALETTES);
+  cols = palette.colors;
+  F = [
+    { fx: r(0.9,2.2), fy: r(0.9,2.2), g: r(1.5,2.4) },   // dominant long sweep
+    { fx: r(1.6,3.4), fy: r(1.4,3.0), g: r(0.7,1.2) },   // secondary bend
+    { fx: r(2.4,4.8), fy: r(2.4,4.8), g: r(0.35,0.7) },  // medium detail
+    { fx: r(3.6,7.5), fy: r(2.2,5.0), g: r(0.18,0.4) },  // fine jitter
+  ];
+  T0 = r(0, 20);
+  paintingTitle = makeTitle(palette);
+  palette.bg = palette.bgs[Math.floor(rng() * palette.bgs.length)];
+
+  // Build an accent pool from colours of 3 randomly-picked OTHER palettes so
+  // the worker can sprinkle cross-palette hues at high colour-variety settings.
+  accentCols = [];
+  const others = PALETTES.filter(p => p !== palette);
+  for (let i = 0; i < 6; i++) {
+    const pp = others[Math.floor(rng() * others.length)];
+    accentCols.push(pp.colors[Math.floor(rng() * pp.colors.length)]);
+  }
+}
+
+function setRatio(key) {
+  currentRatio = key;
+  const cfg = RATIOS[key];
+  W = cfg.W; H = cfg.H;
+  canvas.width = W; canvas.height = H;
+  offscreen.width = W; offscreen.height = H;
+  ctx.fillStyle = palette ? palette.bg : '#e8e4de';
+  ctx.fillRect(0, 0, W, H);
+  offCtx.fillStyle = palette ? palette.bg : '#e8e4de';
+  offCtx.fillRect(0, 0, W, H);
+
+  document.querySelectorAll('.ratio-btn').forEach(b => b.classList.toggle('active', b.dataset.ratio === key));
+  moveRatioIndicator(document.querySelector('.ratio-btn.active'));
+}
+
+// Smoothly morph the canvas from the current aspect to the target one while the
+// placeholder crossfades and the worker builds the new artwork in parallel.
+let ratioMorphCtrl = null;
+async function transitionRatio(newKey) {
+  if (newKey === currentRatio) return;
+
+  const token = ++genToken;
+  refreshBtn.disabled = true;
+  downloadBtn.disabled = true;
+
+  const cfg = RATIOS[newKey];
+  const newW = cfg.W, newH = cfg.H;
+
+  // Stop any in-flight morph so we morph from the current (possibly mid-animation) size.
+  if (ratioMorphCtrl) { try { ratioMorphCtrl.stop(); } catch(_){} }
+
+  // Pin canvas CSS size to its current visible size so swapping the backing
+  // bitmap below doesn't cause a layout jump.
+  const curRect = canvas.getBoundingClientRect();
+  canvas.style.width  = curRect.width  + 'px';
+  canvas.style.height = curRect.height + 'px';
+
+  // Crossfade the placeholder in over the current artwork.
+  showPlaceholder();
+
+  // Swap backing bitmap dimensions and paint background; the canvas element
+  // still displays at the pinned CSS size because of style.width/height above.
+  W = newW; H = newH;
+  canvas.width = W; canvas.height = H;
+  offscreen.width = W; offscreen.height = H;
+  const bg = palette ? palette.bg : '#e8e4de';
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+  offCtx.fillStyle = bg; offCtx.fillRect(0, 0, W, H);
+
+  currentRatio = newKey;
+  document.querySelectorAll('.ratio-btn').forEach(b => b.classList.toggle('active', b.dataset.ratio === newKey));
+  moveRatioIndicator(document.querySelector('.ratio-btn.active'));
+
+  // Morph the canvas CSS dims toward the new intrinsic size; the frame wraps
+  // the canvas so its border (and the placeholder inside) follow the shape.
+  ratioMorphCtrl = animate(
+    canvas,
+    { width: newW, height: newH },
+    { duration: 0.5, ease: [0.22, 0.85, 0.3, 1] }
+  );
+
+  // Kick off generation in parallel with the morph.
+  const started = performance.now();
+  const strokesP = workerOneOff({
+    seed: SEED, F, T0, cols, accents: accentCols,
+    thick:   +sliders.thick.value,
+    density: +sliders.density.value,
+    color:   +sliders.color.value,
+    w: W, h: H,
+  });
+
+  try { await (ratioMorphCtrl.finished || ratioMorphCtrl); } catch(_) {}
+  if (token !== genToken) return;
+  ratioMorphCtrl = null;
+  canvas.style.width = '';
+  canvas.style.height = '';
+
+  const strokes = await strokesP;
+  if (token !== genToken) return;
+
+  const elapsed = performance.now() - started;
+  const wait = Math.max(0, MIN_PLACEHOLDER_MS - elapsed);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  if (token !== genToken) return;
+
+  allStrokes = strokes;
+  renderCurrent();
+  hidePlaceholder();
+
+  refreshBtn.disabled = false;
+  downloadBtn.disabled = false;
+}
+
+// ───────────────────────────── Generation with placeholder ─────────────────────────────
+const MIN_PLACEHOLDER_MS = 700;
+let genToken = 0;
+
+async function generateWithPlaceholder({ updateMeta } = { updateMeta: true }) {
+  const token = ++genToken;
+  refreshBtn.disabled = true;
+  downloadBtn.disabled = true;
+  if (updateMeta) hideMeta();
+  showPlaceholder();
+
+  const started = performance.now();
+  const strokes = await workerOneOff({
+    seed: SEED, F, T0, cols, accents: accentCols,
+    thick:   +sliders.thick.value,
+    density: +sliders.density.value,
+    color:   +sliders.color.value,
+    w: W, h: H,
+  });
+
+  if (token !== genToken) return;
+
+  const elapsed = performance.now() - started;
+  const wait = Math.max(0, MIN_PLACEHOLDER_MS - elapsed);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  if (token !== genToken) return;
+
+  allStrokes = strokes;
+  renderCurrent();
+  hidePlaceholder();
+  if (updateMeta) showMeta();
+
+  refreshBtn.disabled = false;
+  downloadBtn.disabled = false;
+}
+
+// ───────────────────────────── Slider wiring (instant, no placeholder) ─────────────────────────────
+const ids = ['thick', 'density', 'color'];
+const sliders = {}, vals = {};
+ids.forEach(id => {
+  sliders[id] = document.getElementById('sl-' + id);
+  vals[id] = document.getElementById('val-' + id);
+});
+
+const valueAnimCtrls = {};
+function popValue(el, key) {
+  if (valueAnimCtrls[key]) { try { valueAnimCtrls[key].stop(); } catch(_){} }
+  valueAnimCtrls[key] = animate(el, { scale: [1.22, 1] }, { type: spring, stiffness: 600, damping: 16, mass: 0.6 });
+}
+
+ids.forEach(id => {
+  sliders[id].addEventListener('input', () => {
+    vals[id].textContent = sliders[id].value;
+    popValue(vals[id], id);
+    requestLiveStrokes();
+  });
+});
+
+// ───────────────────────────── Buttons ─────────────────────────────
+function attachButtonPress(btn) {
+  let pressCtrl = null;
+  const press = () => {
+    if (pressCtrl) { try { pressCtrl.stop(); } catch(_){} }
+    pressCtrl = animate(btn, { scale: 0.94 }, { duration: 0.08, ease: 'easeOut' });
+  };
+  const release = () => {
+    if (pressCtrl) { try { pressCtrl.stop(); } catch(_){} }
+    pressCtrl = animate(btn, { scale: 1 }, { type: spring, stiffness: 600, damping: 18 });
+  };
+  btn.addEventListener('pointerdown', press);
+  btn.addEventListener('pointerup', release);
+  btn.addEventListener('pointerleave', release);
+  btn.addEventListener('pointercancel', release);
+}
+
+// Subtle hover lift that composes with the press scale above (Motion tracks
+// each transform property independently).
+function attachButtonHover(btn) {
+  let hc = null;
+  btn.addEventListener('pointerenter', () => {
+    if (hc) { try { hc.stop(); } catch(_){} }
+    hc = animate(btn, { y: -2 }, { type: spring, stiffness: 450, damping: 22 });
+  });
+  btn.addEventListener('pointerleave', () => {
+    if (hc) { try { hc.stop(); } catch(_){} }
+    hc = animate(btn, { y: 0 }, { type: spring, stiffness: 450, damping: 26 });
+  });
+}
+
+document.querySelectorAll('.ctrl-btn, .ratio-btn').forEach(btn => {
+  attachButtonPress(btn);
+  attachButtonHover(btn);
+});
+
+// Fires a visible press-and-release purely from code (used for keyboard shortcuts).
+function flashButton(btn) {
+  animate(btn, { scale: [0.92, 1] }, {
+    duration: 0.38, type: spring, stiffness: 500, damping: 18
+  });
+}
+
+const refreshIcon  = refreshBtn.querySelector('.btn-icon');
+const downloadIcon = downloadBtn.querySelector('.btn-icon');
+
+refreshBtn.addEventListener('click', () => {
+  if (refreshIcon) {
+    animate(refreshIcon,
+      { rotate: [0, 360] },
+      { duration: 0.75, ease: [0.35, 0, 0.2, 1] }
+    );
+  }
+  initSeed(Math.floor(Math.random() * 99999999));
+  generateWithPlaceholder({ updateMeta: true });
+});
+
+document.querySelectorAll('.ratio-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    transitionRatio(btn.dataset.ratio);
+  });
+});
+
+downloadBtn.addEventListener('click', async () => {
+  const cfg = RATIOS[currentRatio];
+  const expW = cfg.expW, expH = cfg.expH;
+  downloadBtn.disabled = true;
+  try {
+    const expStrokes = await workerOneOff({
+      seed: SEED, F, T0, cols, accents: accentCols,
+      thick:   +sliders.thick.value,
+      density: +sliders.density.value,
+      color:   +sliders.color.value,
+      w: expW, h: expH,
+    });
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = expW; exportCanvas.height = expH;
+    const exportCtx = exportCanvas.getContext('2d');
+    renderToCanvas(exportCanvas, exportCtx, expStrokes, expW, expH, palette.bg);
+    const url = exportCanvas.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${paintingTitle}.png`;
+    a.click();
+
+    // Success pulse: the arrow dives, the button exhales.
+    if (downloadIcon) {
+      animate(downloadIcon,
+        { y: [0, 5, 0] },
+        { duration: 0.5, ease: [0.4, 0, 0.2, 1] }
+      );
+    }
+    animate(downloadBtn,
+      { scale: [1.06, 1] },
+      { duration: 0.55, type: spring, stiffness: 260, damping: 16 }
+    );
+  } finally {
+    downloadBtn.disabled = false;
+  }
+});
+
+// ───────────────────────────── Frame parallax tilt ─────────────────────────────
+// Gentle 3D tilt of the artwork frame that follows the cursor and springs back
+// on leave. Coalesced via rAF so rapid pointermoves only schedule one animation.
+let tiltCtrl = null;
+let tiltPending = null;
+let tiltRaf = null;
+function commitTilt() {
+  tiltRaf = null;
+  if (!tiltPending) return;
+  if (tiltCtrl) { try { tiltCtrl.stop(); } catch(_){} }
+  tiltCtrl = animate(frameEl, tiltPending, { duration: 0.42, ease: [0.22, 0.7, 0.3, 1] });
+  tiltPending = null;
+}
+canvasArea.addEventListener('pointermove', (e) => {
+  const r = canvasArea.getBoundingClientRect();
+  const nx = (e.clientX - r.left - r.width  / 2) / (r.width  / 2);
+  const ny = (e.clientY - r.top  - r.height / 2) / (r.height / 2);
+  const clamp = v => v < -1 ? -1 : v > 1 ? 1 : v;
+  tiltPending = {
+    rotateX: clamp(-ny) * 3.2,
+    rotateY: clamp( nx) * 3.2,
+  };
+  if (!tiltRaf) tiltRaf = requestAnimationFrame(commitTilt);
+});
+canvasArea.addEventListener('pointerleave', () => {
+  tiltPending = null;
+  if (tiltCtrl) { try { tiltCtrl.stop(); } catch(_){} }
+  tiltCtrl = animate(frameEl,
+    { rotateX: 0, rotateY: 0 },
+    { type: spring, stiffness: 140, damping: 22, mass: 1 }
+  );
+});
+
+// ───────────────────────────── Ratio pill (FLIP) ─────────────────────────────
+let indicatorCtrl = null;
+function moveRatioIndicator(targetBtn, instant = false) {
+  if (!targetBtn) return;
+  const parent = targetBtn.parentElement;
+  const tr = targetBtn.getBoundingClientRect();
+  const pr = parent.getBoundingClientRect();
+  const x = tr.left - pr.left;
+  const y = tr.top - pr.top;
+  if (indicatorCtrl) { try { indicatorCtrl.stop(); } catch(_){} }
+  if (instant) {
+    indicator.style.transform = `translate(${x}px, ${y}px)`;
+    indicator.style.width = tr.width + 'px';
+    indicator.style.height = tr.height + 'px';
+    return;
+  }
+  indicatorCtrl = animate(indicator,
+    { x, y, width: tr.width, height: tr.height },
+    { type: spring, stiffness: 500, damping: 32, mass: 0.7 }
+  );
+}
+
+// ───────────────────────────── Keyboard shortcuts ─────────────────────────────
+const RATIO_KEYS = { '1': '1x1', '2': '9x16', '3': '16x9' };
+window.addEventListener('keydown', (e) => {
+  const tag = (e.target && e.target.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (refreshBtn.disabled) return;
+    flashButton(refreshBtn);
+    refreshBtn.click();
+  } else if (e.key === 's' || e.key === 'S') {
+    e.preventDefault();
+    if (downloadBtn.disabled) return;
+    flashButton(downloadBtn);
+    downloadBtn.click();
+  } else if (RATIO_KEYS[e.key]) {
+    e.preventDefault();
+    const target = document.querySelector(`.ratio-btn[data-ratio="${RATIO_KEYS[e.key]}"]`);
+    if (target) { flashButton(target); target.click(); }
+  }
+});
+
+// ───────────────────────────── Initial mount ─────────────────────────────
+function mount() {
+  requestAnimationFrame(() => {
+    moveRatioIndicator(document.querySelector('.ratio-btn.active'), true);
+
+    const stages = [ratioBar, canvasArea, controlsEl];
+    stages.forEach(el => el.classList.remove('stage-hidden'));
+    stages.forEach((el, i) => {
+      animate(el,
+        { opacity: [0, 1], y: [10, 0] },
+        { duration: 0.5, delay: i * 0.07, ease: 'easeOut' }
+      );
+    });
+  });
+
+  window.addEventListener('resize', () => {
+    moveRatioIndicator(document.querySelector('.ratio-btn.active'), true);
+  });
+}
+
+// Paint canvas with a neutral bg so placeholder sits on something nice.
+ctx.fillStyle = '#e8e4de';
+ctx.fillRect(0, 0, W, H);
+
+initSeed(Math.floor(Math.random() * 99999999));
+mount();
+generateWithPlaceholder({ updateMeta: true });
+</script>
+</body>
+</html>
